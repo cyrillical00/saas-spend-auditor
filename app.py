@@ -3,6 +3,7 @@ import pandas as pd
 from sample_data import SAMPLE_VENDORS
 from audit import categorize_vendors
 from tabs import spend, security, waste, summary
+from rate_limiter import get_client_ip, check_limit, record_run
 
 st.set_page_config(
     page_title="SaaS Spend Auditor",
@@ -118,15 +119,23 @@ elif input_mode == "Upload CSV":
         vendors = df_up.to_dict(orient="records")
         st.success(f"✓ {len(vendors)} vendors loaded")
 
-run_col, _ = st.columns([1, 3])
+client_ip = get_client_ip(dict(st.context.headers))
+allowed, remaining = check_limit(client_ip)
+
+run_col, info_col = st.columns([1, 3])
 with run_col:
     run_clicked = st.button(
         f"Run Audit ({len(vendors)} vendors)",
-        disabled=len(vendors) == 0,
+        disabled=len(vendors) == 0 or not allowed,
         use_container_width=True,
     )
+with info_col:
+    if not allowed:
+        st.error("Daily limit reached (5 audits/day). Come back tomorrow.")
+    else:
+        st.caption(f"{remaining} audit{'s' if remaining != 1 else ''} remaining today")
 
-if run_clicked and vendors:
+if run_clicked and vendors and allowed:
     with st.spinner("Categorizing vendors with Claude..."):
         try:
             categorized = categorize_vendors(vendors)
@@ -135,6 +144,7 @@ if run_clicked and vendors:
             df["category"] = df["vendor"].apply(lambda v: cat_map.get(v, {}).get("category", "Uncategorized"))
             st.session_state["df"] = df
             st.session_state["categorized"] = categorized
+            record_run(client_ip)
             st.success(f"✓ Audit complete — {len(vendors)} vendors analyzed")
         except Exception as e:
             st.error(f"Audit failed: {e}")
