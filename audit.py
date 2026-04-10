@@ -1,5 +1,6 @@
 import anthropic
 import json
+import re
 import os
 from dotenv import load_dotenv
 
@@ -44,20 +45,26 @@ or numbers. Format: ACTION — rationale (savings or risk reduction).
 Be direct. Use the specific dollar figures and vendor names provided. Do not hedge."""
 
 
+def _extract_json_array(text: str) -> list:
+    # Strip markdown code fences
+    text = re.sub(r"```(?:json)?", "", text).strip()
+    # Find the outermost JSON array
+    start = text.find("[")
+    end = text.rfind("]")
+    if start == -1 or end == -1:
+        raise ValueError("No JSON array found in response")
+    return json.loads(text[start : end + 1])
+
+
 def categorize_vendors(vendors: list[dict]) -> list[dict]:
     vendor_names = [{"vendor": v["vendor"]} for v in vendors]
     msg = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=4096,
+        max_tokens=8096,
         system=CATEGORIZE_SYSTEM,
         messages=[{"role": "user", "content": json.dumps(vendor_names)}],
     )
-    raw = msg.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
+    return _extract_json_array(msg.content[0].text)
 
 
 def generate_executive_summary(audit_summary: dict) -> str:
