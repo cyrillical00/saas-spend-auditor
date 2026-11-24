@@ -21,12 +21,32 @@ def _save(data: dict):
         json.dump(data, f)
 
 
-def get_client_ip(headers: dict) -> str:
-    for key in ("x-forwarded-for", "x-real-ip", "cf-connecting-ip"):
-        val = headers.get(key)
-        if val:
-            return val.split(",")[0].strip()
+def _trusted_hops() -> int:
+    """Number of reverse proxies in front of the app that append to X-Forwarded-For.
+
+    Assumes Streamlit Community Cloud: one load balancer appends the address it
+    saw as the right-most X-Forwarded-For entry. Anything to its left is
+    client-supplied and must not be trusted. Override with TRUSTED_PROXY_HOPS.
+    """
+    try:
+        return max(1, int(os.environ.get("TRUSTED_PROXY_HOPS", "1")))
+    except ValueError:
+        return 1
+
+
+def client_ip_from_headers(headers) -> str:
+    """Pick the client IP from the right-most trusted hop of X-Forwarded-For."""
+    lowered = {str(k).lower(): v for k, v in dict(headers).items()}
+    forwarded = lowered.get("x-forwarded-for", "")
+    parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+    if parts:
+        hops = _trusted_hops()
+        return parts[-hops] if len(parts) >= hops else parts[0]
     return "unknown"
+
+
+def get_client_ip(headers: dict) -> str:
+    return client_ip_from_headers(headers)
 
 
 def check_limit(ip: str) -> tuple[bool, int]:
